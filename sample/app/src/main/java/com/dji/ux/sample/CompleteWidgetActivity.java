@@ -4,19 +4,32 @@ import android.app.Activity;
 import android.content.Context;
 import android.graphics.Point;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.SystemClock;
 import android.view.Display;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.view.animation.Animation;
 import android.view.animation.Transformation;
+import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.RelativeLayout;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import androidx.annotation.NonNull;
 
 import com.dji.mapkit.core.maps.DJIMap;
 
+import dji.common.flightcontroller.Attitude;
+import dji.common.flightcontroller.LocationCoordinate3D;
+import dji.common.gimbal.GimbalState;
 import dji.keysdk.CameraKey;
 import dji.keysdk.KeyManager;
+import dji.sdk.flightcontroller.FlightController;
+import dji.sdk.products.Aircraft;
+import dji.sdk.sdkmanager.DJISDKManager;
 import dji.ux.panel.CameraSettingAdvancedPanel;
 import dji.ux.panel.CameraSettingExposurePanel;
 import dji.ux.utils.DJIProductUtil;
@@ -37,7 +50,7 @@ import dji.ux.widget.controls.LensControlWidget;
 /**
  * Activity that shows all the UI elements together
  */
-public class CompleteWidgetActivity extends Activity {
+public class CompleteWidgetActivity extends Activity implements View.OnClickListener{
 
     private MapWidget mapWidget;
     private ViewGroup parentView;
@@ -67,6 +80,17 @@ public class CompleteWidgetActivity extends Activity {
     private int margin;
     private int deviceWidth;
     private int deviceHeight;
+
+    private Aircraft DJIMini2Drone;
+    private Button photoBtn;
+    private Button videoBtn;
+    private TextView stateView;
+    private LocationCoordinate3D droneCurrentLocation;
+    private double gimbalPitch;
+    private double droneYaw;
+    private String recordingDuration = "";
+    private boolean recording = false;
+    private long recordingStartTime;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -99,183 +123,232 @@ public class CompleteWidgetActivity extends Activity {
         secondaryFPVWidget = findViewById(R.id.secondary_fpv_widget);
         secondaryFPVWidget.setOnClickListener(view -> swapVideoSource());
 
+        photoBtn = (Button) parentView.findViewById(R.id.photo_button);
+        photoBtn.setOnClickListener(this);
+        videoBtn = (Button) parentView.findViewById(R.id.video_button);
+        videoBtn.setOnClickListener(this);
+        stateView = (TextView) parentView.findViewById(R.id.state_view);
+        DJIMini2Drone = (Aircraft) DJISDKManager.getInstance().getProduct();
+        DJIMini2Drone.getGimbal().setStateCallback(gimbalState -> gimbalPitch = gimbalState.getAttitudeInDegrees().getPitch());
+
         fpvWidget.setCameraIndexListener((cameraIndex, lensIndex) -> cameraWidgetKeyIndexUpdated(fpvWidget.getCameraKeyIndex(), fpvWidget.getLensKeyIndex()));
         updateSecondaryVideoVisibility();
     }
 
-    private void initCameraView() {
-        cameraSettingExposurePanel = findViewById(R.id.camera_setting_exposure_panel);
-        cameraSettingAdvancedPanel = findViewById(R.id.camera_setting_advanced_panel);
-        cameraConfigISOAndEIWidget = findViewById(R.id.camera_config_iso_and_ei_widget);
-        cameraConfigShutterWidget = findViewById(R.id.camera_config_shutter_widget);
-        cameraConfigApertureWidget = findViewById(R.id.camera_config_aperture_widget);
-        cameraConfigEVWidget = findViewById(R.id.camera_config_ev_widget);
-        cameraConfigWBWidget = findViewById(R.id.camera_config_wb_widget);
-        cameraConfigStorageWidget = findViewById(R.id.camera_config_storage_widget);
-        cameraConfigSSDWidget = findViewById(R.id.camera_config_ssd_widget);
-        lensControlWidget = findViewById(R.id.camera_lens_control);
-        controlsWidget = findViewById(R.id.CameraCapturePanel);
-        thermalPaletteWidget = findViewById(R.id.thermal_pallette_widget);
-    }
-
-    private void onViewClick(View view) {
-        if (view == fpvWidget && !isMapMini) {
-            resizeFPVWidget(RelativeLayout.LayoutParams.MATCH_PARENT, RelativeLayout.LayoutParams.MATCH_PARENT, 0, 0);
-            reorderCameraCapturePanel();
-            ResizeAnimation mapViewAnimation = new ResizeAnimation(mapWidget, deviceWidth, deviceHeight, width, height, margin);
-            mapWidget.startAnimation(mapViewAnimation);
-            isMapMini = true;
-        } else if (view == mapWidget && isMapMini) {
-            hidePanels();
-            resizeFPVWidget(width, height, margin, 12);
-            reorderCameraCapturePanel();
-            ResizeAnimation mapViewAnimation = new ResizeAnimation(mapWidget, width, height, deviceWidth, deviceHeight, 0);
-            mapWidget.startAnimation(mapViewAnimation);
-            isMapMini = false;
-        }
-    }
-
-    private void resizeFPVWidget(int width, int height, int margin, int fpvInsertPosition) {
-        RelativeLayout.LayoutParams fpvParams = (RelativeLayout.LayoutParams) primaryVideoView.getLayoutParams();
-        fpvParams.height = height;
-        fpvParams.width = width;
-        fpvParams.rightMargin = margin;
-        fpvParams.bottomMargin = margin;
-        if (isMapMini) {
-            fpvParams.addRule(RelativeLayout.CENTER_IN_PARENT, 0);
-            fpvParams.addRule(RelativeLayout.ALIGN_PARENT_RIGHT, RelativeLayout.TRUE);
-            fpvParams.addRule(RelativeLayout.ALIGN_PARENT_BOTTOM, RelativeLayout.TRUE);
-        } else {
-            fpvParams.addRule(RelativeLayout.ALIGN_PARENT_RIGHT, 0);
-            fpvParams.addRule(RelativeLayout.ALIGN_PARENT_BOTTOM, 0);
-            fpvParams.addRule(RelativeLayout.CENTER_IN_PARENT, RelativeLayout.TRUE);
-        }
-        primaryVideoView.setLayoutParams(fpvParams);
-
-        parentView.removeView(primaryVideoView);
-        parentView.addView(primaryVideoView, fpvInsertPosition);
-    }
-
-    private void reorderCameraCapturePanel() {
-        View cameraCapturePanel = findViewById(R.id.CameraCapturePanel);
-        parentView.removeView(cameraCapturePanel);
-        parentView.addView(cameraCapturePanel, isMapMini ? 9 : 13);
-    }
-
-    private void swapVideoSource() {
-        if (secondaryFPVWidget.getVideoSource() == FPVWidget.VideoSource.SECONDARY) {
-            fpvWidget.setVideoSource(FPVWidget.VideoSource.SECONDARY);
-            secondaryFPVWidget.setVideoSource(FPVWidget.VideoSource.PRIMARY);
-        } else {
-            fpvWidget.setVideoSource(FPVWidget.VideoSource.PRIMARY);
-            secondaryFPVWidget.setVideoSource(FPVWidget.VideoSource.SECONDARY);
-        }
-    }
-
-    private void cameraWidgetKeyIndexUpdated(int keyIndex, int subKeyIndex) {
-        controlsWidget.updateKeyOnIndex(keyIndex, subKeyIndex);
-        cameraSettingExposurePanel.updateKeyOnIndex(keyIndex, subKeyIndex);
-        cameraSettingAdvancedPanel.updateKeyOnIndex(keyIndex, subKeyIndex);
-        cameraConfigISOAndEIWidget.updateKeyOnIndex(keyIndex, subKeyIndex);
-        cameraConfigShutterWidget.updateKeyOnIndex(keyIndex, subKeyIndex);
-        cameraConfigApertureWidget.updateKeyOnIndex(keyIndex, subKeyIndex);
-        cameraConfigEVWidget.updateKeyOnIndex(keyIndex, subKeyIndex);
-        cameraConfigWBWidget.updateKeyOnIndex(keyIndex, subKeyIndex);
-        cameraConfigStorageWidget.updateKeyOnIndex(keyIndex, subKeyIndex);
-        cameraConfigSSDWidget.updateKeyOnIndex(keyIndex, subKeyIndex);
-        controlsWidget.updateKeyOnIndex(keyIndex, subKeyIndex);
-        lensControlWidget.updateKeyOnIndex(keyIndex, subKeyIndex);
-        thermalPaletteWidget.updateKeyOnIndex(keyIndex, subKeyIndex);
-
-        fpvOverlayWidget.updateKeyOnIndex(keyIndex, subKeyIndex);
-    }
-
-    private void updateSecondaryVideoVisibility() {
-        if (secondaryFPVWidget.getVideoSource() == null || !DJIProductUtil.isSupportMultiCamera()) {
-            secondaryVideoView.setVisibility(View.GONE);
-        } else {
-            secondaryVideoView.setVisibility(View.VISIBLE);
-        }
-    }
-
-    private void hidePanels() {
-        //These panels appear based on keys from the drone itself.
-        if (KeyManager.getInstance() != null) {
-            KeyManager.getInstance().setValue(CameraKey.create(CameraKey.HISTOGRAM_ENABLED, fpvWidget.getCameraKeyIndex()), false, null);
-            KeyManager.getInstance().setValue(CameraKey.create(CameraKey.COLOR_WAVEFORM_ENABLED, fpvWidget.getCameraKeyIndex()), false, null);
-        }
-
-        //These panels have buttons that toggle them, so call the methods to make sure the button state is correct.
-        controlsWidget.setAdvancedPanelVisibility(false);
-        controlsWidget.setExposurePanelVisibility(false);
-
-        //These panels don't have a button state, so we can just hide them.
-        findViewById(R.id.pre_flight_check_list).setVisibility(View.GONE);
-        findViewById(R.id.rtk_panel).setVisibility(View.GONE);
-        //findViewById(R.id.simulator_panel).setVisibility(View.GONE);
-        findViewById(R.id.spotlight_panel).setVisibility(View.GONE);
-        findViewById(R.id.speaker_panel).setVisibility(View.GONE);
-    }
-
     @Override
-    protected void onResume() {
-        super.onResume();
-
-        // Hide both the navigation bar and the status bar.
-        View decorView = getWindow().getDecorView();
-        decorView.setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                | View.SYSTEM_UI_FLAG_FULLSCREEN
-                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
-
-        mapWidget.onResume();
-    }
-
-    @Override
-    protected void onPause() {
-        mapWidget.onPause();
-        super.onPause();
-    }
-
-    @Override
-    protected void onDestroy() {
-        mapWidget.onDestroy();
-        super.onDestroy();
-    }
-
-    @Override
-    protected void onSaveInstanceState(Bundle outState) {
-        super.onSaveInstanceState(outState);
-        mapWidget.onSaveInstanceState(outState);
-    }
-
-    @Override
-    public void onLowMemory() {
-        super.onLowMemory();
-        mapWidget.onLowMemory();
-    }
-
-    private class ResizeAnimation extends Animation {
-
-        private View mView;
-        private int mToHeight;
-        private int mFromHeight;
-
-        private int mToWidth;
-        private int mFromWidth;
-        private int mMargin;
-
-        private ResizeAnimation(View v, int fromWidth, int fromHeight, int toWidth, int toHeight, int margin) {
-            mToHeight = toHeight;
-            mToWidth = toWidth;
-            mFromHeight = fromHeight;
-            mFromWidth = fromWidth;
-            mView = v;
-            mMargin = margin;
-            setDuration(300);
+    public void onClick(View view) {
+        switch (view.getId()) {
+            case R.id.photo_button:
+                if(!recording) {
+                    recordingDuration = "not a recording";
+                    getDroneState();
+                    updateTextView();
+                } else {
+                    Toast.makeText(this, "Can't make photo while recording video", Toast.LENGTH_LONG);
+                }
+                break;
+            case R.id.video_button:
+                if(!recording){
+                    recordingStartTime = SystemClock.uptimeMillis();
+                    recording = true;
+                } else {
+                    recording = false;
+                    recordingDuration = String.valueOf(SystemClock.uptimeMillis() - recordingStartTime);
+                    getDroneState();
+                    updateTextView();
+                }
+                break;
         }
+    }
+
+        private void getDroneState () {
+            FlightController flightController = DJIMini2Drone.getFlightController();
+            droneCurrentLocation = flightController.getState().getAircraftLocation();
+            droneYaw = flightController.getState().getAttitude().yaw;
+        }
+
+        private void updateTextView () {
+            stateView.setText("Latitude: " + droneCurrentLocation.getLatitude() + "\n" +
+                    "Longitude: " + droneCurrentLocation.getLongitude() + "\n" +
+                    "Altitude (meters): " + droneCurrentLocation.getAltitude() + "\n" +
+                    "Gimbal Pitch (degrees): " + gimbalPitch + "\n" +
+                    "Drone Yaw (degrees): " + droneYaw + "\n" +
+                    "Recording Duration (millis): " + recordingDuration + "\n");
+        }
+
+        private void initCameraView () {
+            cameraSettingExposurePanel = findViewById(R.id.camera_setting_exposure_panel);
+            cameraSettingAdvancedPanel = findViewById(R.id.camera_setting_advanced_panel);
+            cameraConfigISOAndEIWidget = findViewById(R.id.camera_config_iso_and_ei_widget);
+            cameraConfigShutterWidget = findViewById(R.id.camera_config_shutter_widget);
+            cameraConfigApertureWidget = findViewById(R.id.camera_config_aperture_widget);
+            cameraConfigEVWidget = findViewById(R.id.camera_config_ev_widget);
+            cameraConfigWBWidget = findViewById(R.id.camera_config_wb_widget);
+            cameraConfigStorageWidget = findViewById(R.id.camera_config_storage_widget);
+            cameraConfigSSDWidget = findViewById(R.id.camera_config_ssd_widget);
+            lensControlWidget = findViewById(R.id.camera_lens_control);
+            controlsWidget = findViewById(R.id.CameraCapturePanel);
+            thermalPaletteWidget = findViewById(R.id.thermal_pallette_widget);
+        }
+
+        private void onViewClick (View view){
+            if (view == fpvWidget && !isMapMini) {
+                resizeFPVWidget(RelativeLayout.LayoutParams.MATCH_PARENT, RelativeLayout.LayoutParams.MATCH_PARENT, 0, 0);
+                reorderCameraCapturePanel();
+                ResizeAnimation mapViewAnimation = new ResizeAnimation(mapWidget, deviceWidth, deviceHeight, width, height, margin);
+                mapWidget.startAnimation(mapViewAnimation);
+                isMapMini = true;
+            } else if (view == mapWidget && isMapMini) {
+                hidePanels();
+                resizeFPVWidget(width, height, margin, 12);
+                reorderCameraCapturePanel();
+                ResizeAnimation mapViewAnimation = new ResizeAnimation(mapWidget, width, height, deviceWidth, deviceHeight, 0);
+                mapWidget.startAnimation(mapViewAnimation);
+                isMapMini = false;
+            }
+        }
+
+        private void resizeFPVWidget ( int width, int height, int margin, int fpvInsertPosition){
+            RelativeLayout.LayoutParams fpvParams = (RelativeLayout.LayoutParams) primaryVideoView.getLayoutParams();
+            fpvParams.height = height;
+            fpvParams.width = width;
+            fpvParams.rightMargin = margin;
+            fpvParams.bottomMargin = margin;
+            if (isMapMini) {
+                fpvParams.addRule(RelativeLayout.CENTER_IN_PARENT, 0);
+                fpvParams.addRule(RelativeLayout.ALIGN_PARENT_RIGHT, RelativeLayout.TRUE);
+                fpvParams.addRule(RelativeLayout.ALIGN_PARENT_BOTTOM, RelativeLayout.TRUE);
+            } else {
+                fpvParams.addRule(RelativeLayout.ALIGN_PARENT_RIGHT, 0);
+                fpvParams.addRule(RelativeLayout.ALIGN_PARENT_BOTTOM, 0);
+                fpvParams.addRule(RelativeLayout.CENTER_IN_PARENT, RelativeLayout.TRUE);
+            }
+            primaryVideoView.setLayoutParams(fpvParams);
+
+            parentView.removeView(primaryVideoView);
+            parentView.addView(primaryVideoView, fpvInsertPosition);
+        }
+
+        private void reorderCameraCapturePanel () {
+            View cameraCapturePanel = findViewById(R.id.CameraCapturePanel);
+            parentView.removeView(cameraCapturePanel);
+            parentView.addView(cameraCapturePanel, isMapMini ? 9 : 13);
+        }
+
+        private void swapVideoSource () {
+            if (secondaryFPVWidget.getVideoSource() == FPVWidget.VideoSource.SECONDARY) {
+                fpvWidget.setVideoSource(FPVWidget.VideoSource.SECONDARY);
+                secondaryFPVWidget.setVideoSource(FPVWidget.VideoSource.PRIMARY);
+            } else {
+                fpvWidget.setVideoSource(FPVWidget.VideoSource.PRIMARY);
+                secondaryFPVWidget.setVideoSource(FPVWidget.VideoSource.SECONDARY);
+            }
+        }
+
+        private void cameraWidgetKeyIndexUpdated ( int keyIndex, int subKeyIndex){
+            controlsWidget.updateKeyOnIndex(keyIndex, subKeyIndex);
+            cameraSettingExposurePanel.updateKeyOnIndex(keyIndex, subKeyIndex);
+            cameraSettingAdvancedPanel.updateKeyOnIndex(keyIndex, subKeyIndex);
+            cameraConfigISOAndEIWidget.updateKeyOnIndex(keyIndex, subKeyIndex);
+            cameraConfigShutterWidget.updateKeyOnIndex(keyIndex, subKeyIndex);
+            cameraConfigApertureWidget.updateKeyOnIndex(keyIndex, subKeyIndex);
+            cameraConfigEVWidget.updateKeyOnIndex(keyIndex, subKeyIndex);
+            cameraConfigWBWidget.updateKeyOnIndex(keyIndex, subKeyIndex);
+            cameraConfigStorageWidget.updateKeyOnIndex(keyIndex, subKeyIndex);
+            cameraConfigSSDWidget.updateKeyOnIndex(keyIndex, subKeyIndex);
+            controlsWidget.updateKeyOnIndex(keyIndex, subKeyIndex);
+            lensControlWidget.updateKeyOnIndex(keyIndex, subKeyIndex);
+            thermalPaletteWidget.updateKeyOnIndex(keyIndex, subKeyIndex);
+
+            fpvOverlayWidget.updateKeyOnIndex(keyIndex, subKeyIndex);
+        }
+
+        private void updateSecondaryVideoVisibility () {
+            if (secondaryFPVWidget.getVideoSource() == null || !DJIProductUtil.isSupportMultiCamera()) {
+                secondaryVideoView.setVisibility(View.GONE);
+            } else {
+                secondaryVideoView.setVisibility(View.VISIBLE);
+            }
+        }
+
+        private void hidePanels () {
+            //These panels appear based on keys from the drone itself.
+            if (KeyManager.getInstance() != null) {
+                KeyManager.getInstance().setValue(CameraKey.create(CameraKey.HISTOGRAM_ENABLED, fpvWidget.getCameraKeyIndex()), false, null);
+                KeyManager.getInstance().setValue(CameraKey.create(CameraKey.COLOR_WAVEFORM_ENABLED, fpvWidget.getCameraKeyIndex()), false, null);
+            }
+
+            //These panels have buttons that toggle them, so call the methods to make sure the button state is correct.
+            controlsWidget.setAdvancedPanelVisibility(false);
+            controlsWidget.setExposurePanelVisibility(false);
+
+            //These panels don't have a button state, so we can just hide them.
+            findViewById(R.id.pre_flight_check_list).setVisibility(View.GONE);
+            findViewById(R.id.rtk_panel).setVisibility(View.GONE);
+            //findViewById(R.id.simulator_panel).setVisibility(View.GONE);
+            findViewById(R.id.spotlight_panel).setVisibility(View.GONE);
+            findViewById(R.id.speaker_panel).setVisibility(View.GONE);
+        }
+
+        @Override
+        protected void onResume () {
+            super.onResume();
+
+            // Hide both the navigation bar and the status bar.
+            View decorView = getWindow().getDecorView();
+            decorView.setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+
+            mapWidget.onResume();
+        }
+
+        @Override
+        protected void onPause () {
+            mapWidget.onPause();
+            super.onPause();
+        }
+
+        @Override
+        protected void onDestroy () {
+            mapWidget.onDestroy();
+            super.onDestroy();
+        }
+
+        @Override
+        protected void onSaveInstanceState (Bundle outState){
+            super.onSaveInstanceState(outState);
+            mapWidget.onSaveInstanceState(outState);
+        }
+
+        @Override
+        public void onLowMemory () {
+            super.onLowMemory();
+            mapWidget.onLowMemory();
+        }
+
+        private class ResizeAnimation extends Animation {
+
+            private View mView;
+            private int mToHeight;
+            private int mFromHeight;
+
+            private int mToWidth;
+            private int mFromWidth;
+            private int mMargin;
+
+            private ResizeAnimation(View v, int fromWidth, int fromHeight, int toWidth, int toHeight, int margin) {
+                mToHeight = toHeight;
+                mToWidth = toWidth;
+                mFromHeight = fromHeight;
+                mFromWidth = fromWidth;
+                mView = v;
+                mMargin = margin;
+                setDuration(300);
+            }
 
         @Override
         protected void applyTransformation(float interpolatedTime, Transformation t) {
