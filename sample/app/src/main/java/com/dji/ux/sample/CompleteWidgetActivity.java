@@ -5,6 +5,7 @@ import android.content.Context;
 import android.graphics.Point;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.view.Display;
 import android.view.View;
@@ -144,7 +145,7 @@ public class CompleteWidgetActivity extends Activity implements View.OnClickList
                     getDroneState();
                     updateTextView();
                 } else {
-                    Toast.makeText(this, "Can't make photo while recording video", Toast.LENGTH_LONG);
+                    showToast("Can't make photo while recording video");
                 }
                 break;
             case R.id.video_button:
@@ -159,6 +160,11 @@ public class CompleteWidgetActivity extends Activity implements View.OnClickList
                 }
                 break;
         }
+    }
+
+    public void showToast(final String message) {
+        Handler handler = new Handler(Looper.getMainLooper());
+        handler.post(() -> Toast.makeText(getApplicationContext(), message, Toast.LENGTH_LONG).show());
     }
 
         private void getDroneState () {
