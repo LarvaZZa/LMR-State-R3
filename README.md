@@ -2,7 +2,7 @@
 
 ## What is This?
 
-This repository contians a base implementation of the UX SDK [by DJI](https://github.com/dji-sdk/Mobile-UXSDK-Android), and an implementation of retreiving the relevant information that defines the state of the DJI Mini 2 drone:
+This repository contains a base implementation of the UX SDK [by DJI](https://github.com/dji-sdk/Mobile-UXSDK-Android), and an implementation of retrieving the relevant information that defines the state of the DJI Mini 2 drone:
 - Latitude;
 - Longitude;
 - Altitude;
@@ -17,8 +17,8 @@ Make sure to create an API Key via the official [DJI Developer platform](https:/
 If you want to retrieve the state of the drone, you must:
 - Install the application on your Android phone;
 - Connect the phone to the drone remote controller;
-- Turn on the drone and the remote cotnroller;
-- Launch the applicaiton;
+- Turn on the drone and the remote controller;
+- Launch the application;
 - Click on "Complete Demo of Default UI Widgets" button;
 - Launch the drone up in the air;
 
